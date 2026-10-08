@@ -25,6 +25,7 @@ Rules:
 - Use ONLY the information in the report, the sensor results and the manual excerpts provided. Do not invent readings, events or manual content.
 - Possible causes are hypotheses, not confirmed findings. Phrase them cautiously and never state a cause as certain.
 - Every possible cause, inspection step, priority and work order draft must cite evidence using only the IDs provided: manual section IDs (for example PUMP-1.1), event IDs (EVENT-1), sensor IDs (SENSOR:bearing_temp), or ISSUE for the reported issue description.
+- Do not write ISSUE or SENSOR: tags inside any text field; cite them only in the evidence lists.
 - Where sensor data is missing, conflicting or invalid, say so in your reasoning and ask a follow-up question about it.
 - Ask 2 to 5 targeted follow-up questions that would help narrow down the cause.
 - Inspection steps must be safe: when hands-on work is needed, the first step must be to isolate and lock out the equipment, citing the safety section if provided.
@@ -43,6 +44,47 @@ SCHEMA_TEXT = """Return JSON with exactly this shape:
 
 def _lower(v):
     return v.strip().lower() if isinstance(v, str) else v
+
+
+def strip_citation_tags(text: str) -> str:
+    if not text:
+        return text if text is not None else ""
+
+    def clean_paren(match):
+        inner = match.group(1).strip()
+        parts = [p.strip() for p in re.split(r"[,;]", inner) if p.strip()]
+        if not parts:
+            return ""
+        kept = []
+        has_tag = False
+        for p in parts:
+            if re.fullmatch(r"ISSUE", p, re.IGNORECASE) or re.fullmatch(r"SENSOR:[A-Za-z0-9_]+", p, re.IGNORECASE):
+                has_tag = True
+                continue
+            subtokens = p.split()
+            if all(
+                re.fullmatch(r"ISSUE", st, re.IGNORECASE) or re.fullmatch(r"SENSOR:[A-Za-z0-9_]+", st, re.IGNORECASE)
+                for st in subtokens
+            ):
+                has_tag = True
+                continue
+            kept.append(p)
+        if not kept:
+            return ""
+        if not has_tag:
+            return match.group(0)
+        return "(" + ", ".join(kept) + ")"
+
+    t = re.sub(r"\(([^()]*)\)", clean_paren, text)
+    t = re.sub(r"SENSOR:([A-Za-z0-9_]+)", lambda m: m.group(1).replace("_", " "), t)
+    lines = []
+    for line in t.split("\n"):
+        l = re.sub(r"[ \t]+", " ", line)
+        l = re.sub(r" +([.,;:?!\]\)])", r"\1", l)
+        l = re.sub(r"(\([ \t]*)", "(", l)
+        l = re.sub(r"([ \t]*\))", ")", l)
+        lines.append(l.strip())
+    return "\n".join(lines).strip()
 
 
 class Cause(BaseModel):
@@ -320,8 +362,8 @@ def run_triage(db: Session, report_id: int) -> dict:
             warnings.append(f"Dropped cause '{c.cause[:60]}' because it had no valid citation.")
             continue
         causes.append(
-            {"cause": c.cause.strip(), "likelihood": c.likelihood,
-             "reasoning": c.reasoning.strip(), "evidence": valid}
+            {"cause": strip_citation_tags(c.cause), "likelihood": c.likelihood,
+             "reasoning": strip_citation_tags(c.reasoning), "evidence": valid}
         )
     for s in ai.inspection_steps:
         valid, invalid = _clean(s.evidence, allowed)
@@ -330,14 +372,17 @@ def run_triage(db: Session, report_id: int) -> dict:
         if not valid:
             warnings.append(f"Dropped inspection step '{s.step[:60]}' because it had no valid citation.")
             continue
-        steps.append({"step": s.step.strip(), "evidence": valid})
+        steps.append({"step": strip_citation_tags(s.step), "evidence": valid})
     if not causes and not steps:
         return _fail(
             db, report, "ai_failed",
             "The AI reply contained no suggestions with valid citations, so it was discarded.",
             retrieved, llm.model_name(),
         )
-    questions = [{"question": q.question.strip(), "why": q.why.strip()} for q in ai.follow_up_questions]
+    questions = [
+        {"question": strip_citation_tags(q.question), "why": strip_citation_tags(q.why)}
+        for q in ai.follow_up_questions
+    ]
 
     # 4. Priority: AI may raise, never lower, the rule-based minimum
     p_valid, _ = _clean(ai.suggested_priority.evidence, allowed)
@@ -351,6 +396,7 @@ def run_triage(db: Session, report_id: int) -> dict:
         warnings.append(
             f"Priority raised from {ai_level} to {floor} because deterministic threshold checks require at least {floor}."
         )
+    p_rationale = strip_citation_tags(ai.suggested_priority.rationale)
     wo_valid, _ = _clean(ai.work_order.evidence, allowed)
     if not wo_valid:
         warnings.append("The work order draft had no valid citation.")
@@ -374,13 +420,15 @@ def run_triage(db: Session, report_id: int) -> dict:
             )
         )
 
-    description = ai.work_order.description.strip()
+    wo_title = strip_citation_tags(ai.work_order.title)[:200]
+    wo_desc = strip_citation_tags(ai.work_order.description)
+    description = wo_desc
     if steps:
         description += "\n\nSuggested inspection steps:\n" + "\n".join(
             f"{i}. {s['step']}" for i, s in enumerate(steps, 1)
         )
     proposed = {
-        "title": ai.work_order.title.strip()[:200],
+        "title": wo_title,
         "description": description,
         "priority": final,
         "evidence": wo_valid,
@@ -422,7 +470,7 @@ def run_triage(db: Session, report_id: int) -> dict:
         "inspection_steps": steps,
         "suggested_priority": {
             "level": final, "ai_level": ai_level, "floor": floor, "adjusted": adjusted,
-            "rationale": ai.suggested_priority.rationale.strip(), "evidence": p_valid,
+            "rationale": p_rationale, "evidence": p_valid,
         },
         "work_order": wo_result,
         "warnings": warnings,

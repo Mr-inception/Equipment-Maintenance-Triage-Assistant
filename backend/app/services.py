@@ -1,7 +1,10 @@
 from sqlalchemy.orm import Session
 
 from . import models as m
-from .findings import confirmed_cause_ids, is_superseded, latest_successful_run_id
+from .findings import (
+    confirmed_cause_ids, confirmed_causes_by_title, is_superseded, latest_successful_run_id,
+    normalize_cause_title,
+)
 from .rules import normalize_sensor_name, run_rules
 from .schemas import ReportIn
 
@@ -89,6 +92,28 @@ def report_detail(report: m.IssueReport) -> dict:
     findings = sorted(report.findings, key=lambda f: f.id)
     latest_run_id = latest_successful_run_id(report)
     confirmed_ids = confirmed_cause_ids(findings)
+    conf_by_title = confirmed_causes_by_title(findings)
+
+    findings_out = []
+    for f in findings:
+        f_dict = {
+            "id": f.id, "kind": f.kind.value, "origin": f.origin.value,
+            "text": f.text, "evidence": f.evidence,
+            "superseded": is_superseded(f, latest_run_id, confirmed_ids),
+        }
+        if f.kind == m.FindingKind.possible_cause:
+            is_dup = False
+            cf_id = None
+            norm = normalize_cause_title(f.text)
+            if norm in conf_by_title:
+                orig_id, conf_id = conf_by_title[norm]
+                if f.id != orig_id:
+                    is_dup = True
+                    cf_id = conf_id
+            f_dict["duplicate_of_confirmed"] = is_dup
+            f_dict["confirmed_finding_id"] = cf_id
+        findings_out.append(f_dict)
+
     return {
         "id": report.id,
         "equipment": {"id": eq.id, "equipment_type": eq.equipment_type, "identifier": eq.identifier},
@@ -104,12 +129,5 @@ def report_detail(report: m.IssueReport) -> dict:
             for r in readings
         ],
         "rules": summary.to_dict(),
-        "findings": [
-            {
-                "id": f.id, "kind": f.kind.value, "origin": f.origin.value,
-                "text": f.text, "evidence": f.evidence,
-                "superseded": is_superseded(f, latest_run_id, confirmed_ids),
-            }
-            for f in findings
-        ],
+        "findings": findings_out,
     }

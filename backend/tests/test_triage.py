@@ -370,3 +370,152 @@ def test_rerun_after_approved_draft_creates_new_draft(triage_env, monkeypatch):
         assert len(orders) == 2
         statuses = {o.status for o in orders}
         assert statuses == {m.WorkOrderStatus.approved, m.WorkOrderStatus.draft}
+
+
+def test_strip_citation_tags_pure_helper():
+    from app.triage import strip_citation_tags
+
+    # (ISSUE, SENSOR:bearing_temp) removed
+    assert strip_citation_tags("(ISSUE, SENSOR:bearing_temp)") == ""
+
+    # (ISSUE, PUMP-1.1) -> (PUMP-1.1)
+    assert strip_citation_tags("(ISSUE, PUMP-1.1)") == "(PUMP-1.1)"
+
+    # The SENSOR:bearing_temp readings conflict -> The bearing temp readings conflict
+    assert (
+        strip_citation_tags("The SENSOR:bearing_temp readings conflict")
+        == "The bearing temp readings conflict"
+    )
+
+    # text without tags unchanged
+    plain = "Pump inspection and routine overhaul steps (PUMP-1.1)."
+    assert strip_citation_tags(plain) == plain
+
+    # no double spaces left
+    tagged = "Bearing is hot (ISSUE, SENSOR:bearing_temp) and requires attention."
+    cleaned = strip_citation_tags(tagged)
+    assert "  " not in cleaned
+    assert cleaned == "Bearing is hot and requires attention."
+
+
+def test_triage_strips_citation_tags_from_prose_preserving_evidence(triage_env, monkeypatch):
+    client, Session = triage_env
+    ai = fake_ai(
+        possible_causes=[
+            {
+                "cause": "Bearing lubrication issue (ISSUE, SENSOR:bearing_temp)",
+                "likelihood": "medium",
+                "reasoning": "The SENSOR:bearing_temp readings conflict (ISSUE, PUMP-1.1).",
+                "evidence": ["PUMP-1.1", "SENSOR:bearing_temp", "ISSUE"],
+            }
+        ],
+        follow_up_questions=[
+            {
+                "question": "Can the SENSOR:bearing_temp be checked manually?",
+                "why": "Readings are conflicting (ISSUE, SENSOR:bearing_temp).",
+            }
+        ],
+        inspection_steps=[
+            {
+                "step": "Isolate motor and check SENSOR:bearing_temp (ISSUE, PUMP-2.1).",
+                "evidence": ["PUMP-2.1", "SENSOR:bearing_temp"],
+            }
+        ],
+        suggested_priority={
+            "level": "high",
+            "rationale": "High temperature observed (ISSUE, SENSOR:bearing_temp).",
+            "evidence": ["PUMP-1.1"],
+        },
+        work_order={
+            "title": "Inspect P-101 (ISSUE, SENSOR:bearing_temp)",
+            "description": "Investigate SENSOR:bearing_temp reading (ISSUE, PUMP-1.1).",
+            "evidence": ["PUMP-1.1", "EVENT-1", "ISSUE"],
+        },
+    )
+    monkeypatch.setattr(llm, "complete", lambda system, user, max_tokens=2500: ai)
+    rid = make_report(client)
+    res = client.post(f"/api/reports/{rid}/triage").json()
+    assert res["status"] == "success"
+    result = res["result"]
+
+    # Cause text & reasoning sanitized
+    cause = result["possible_causes"][0]
+    assert cause["cause"] == "Bearing lubrication issue"
+    assert cause["reasoning"] == "The bearing temp readings conflict (PUMP-1.1)."
+    assert cause["evidence"] == ["PUMP-1.1", "SENSOR:bearing_temp", "ISSUE"]
+
+    # Question & why sanitized
+    q = result["follow_up_questions"][0]
+    assert q["question"] == "Can the bearing temp be checked manually?"
+    assert q["why"] == "Readings are conflicting."
+
+    # Inspection step sanitized
+    step = result["inspection_steps"][0]
+    assert step["step"] == "Isolate motor and check bearing temp (PUMP-2.1)."
+    assert step["evidence"] == ["PUMP-2.1", "SENSOR:bearing_temp"]
+
+    # Priority rationale sanitized
+    assert result["suggested_priority"]["rationale"] == "High temperature observed."
+    assert result["suggested_priority"]["evidence"] == ["PUMP-1.1"]
+
+    # Work order & ai_draft sanitized, evidence intact
+    with Session() as db:
+        wo = db.query(m.WorkOrder).filter(m.WorkOrder.report_id == rid).one()
+        assert wo.title == "Inspect P-101"
+        assert "SENSOR:" not in wo.description
+        assert "(ISSUE" not in wo.description
+        assert "bearing temp" in wo.description
+        assert "(PUMP-1.1)" in wo.description
+        assert "(PUMP-2.1)" in wo.description
+        assert wo.ai_draft["title"] == "Inspect P-101"
+        ev_types = {e["type"] for e in wo.ai_draft["evidence"]}
+        assert {"report", "manual", "event"} <= ev_types
+
+        finding = db.query(m.Finding).filter(m.Finding.kind == m.FindingKind.possible_cause).one()
+        assert "SENSOR:" not in finding.text
+        assert "(ISSUE" not in finding.text
+        assert any(e.get("name") == "bearing_temp" for e in finding.evidence)
+
+
+def test_duplicate_cause_handling(triage_env, monkeypatch):
+    client, _ = triage_env
+    monkeypatch.setattr(llm, "complete", lambda system, user, max_tokens=2500: fake_ai())
+    rid = make_report(client)
+
+    # 1. Run triage initially
+    client.post(f"/api/reports/{rid}/triage")
+    rep1 = client.get(f"/api/reports/{rid}").json()
+    causes1 = [f for f in rep1["findings"] if f["kind"] == "possible_cause"]
+    assert len(causes1) >= 1
+    orig_cause = causes1[0]
+    orig_cause_id = orig_cause["id"]
+    assert orig_cause.get("duplicate_of_confirmed") is False
+    assert orig_cause.get("confirmed_finding_id") is None
+
+    # 2. Confirm the original cause
+    conf_res = client.post(f"/api/findings/{orig_cause_id}/confirm", json={"confirmed_by": "Vikas"})
+    assert conf_res.status_code == 201
+    confirmed_id = conf_res.json()["id"]
+
+    # 3. Run triage again with same fake_ai (which returns the same cause titles)
+    client.post(f"/api/reports/{rid}/triage")
+    rep2 = client.get(f"/api/reports/{rid}").json()
+    causes2 = [f for f in rep2["findings"] if f["kind"] == "possible_cause"]
+
+    # Original cause is preserved, confirmed, and NOT marked duplicate
+    orig_after = next(c for c in causes2 if c["id"] == orig_cause_id)
+    assert orig_after["duplicate_of_confirmed"] is False
+    assert orig_after["confirmed_finding_id"] is None
+
+    # New duplicate cause from second run
+    new_cause = next(
+        c for c in causes2
+        if c["id"] != orig_cause_id and not c["superseded"] and "Bearing lubrication" in c["text"]
+    )
+    assert new_cause["duplicate_of_confirmed"] is True
+    assert new_cause["confirmed_finding_id"] == confirmed_id
+
+    # 4. Attempting to confirm the duplicate cause returns HTTP 409
+    dup_confirm = client.post(f"/api/findings/{new_cause['id']}/confirm", json={"confirmed_by": "Vikas"})
+    assert dup_confirm.status_code == 409
+    assert "already been confirmed" in dup_confirm.json()["detail"]

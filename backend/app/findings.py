@@ -4,6 +4,34 @@ from . import models as m
 from .workorders import ConflictError
 
 
+def normalize_cause_title(text: str) -> str:
+    if not text:
+        return ""
+    idx = text.find(" (likelihood:")
+    if idx != -1:
+        title = text[:idx]
+    else:
+        title = text
+    return title.strip().lower()
+
+
+def confirmed_causes_by_title(findings) -> dict[str, tuple[int, int]]:
+    by_id = {f.id: f for f in findings}
+    mapping = {}
+    for f in findings:
+        if f.kind != m.FindingKind.confirmed_finding:
+            continue
+        for e in f.evidence or []:
+            if e.get("type") == "finding" and e.get("id") is not None:
+                orig_id = e["id"]
+                orig_finding = by_id.get(orig_id)
+                if orig_finding:
+                    title = normalize_cause_title(orig_finding.text)
+                    if title:
+                        mapping[title] = (orig_id, f.id)
+    return mapping
+
+
 def confirmed_cause_ids(findings) -> set[int]:
     ids = set()
     for f in findings:
@@ -34,8 +62,8 @@ def is_superseded(f: m.Finding, latest_run_id=None, confirmed_ids=None) -> bool:
     return f.triage_run_id != latest_run_id
 
 
-def finding_detail(f: m.Finding) -> dict:
-    return {
+def finding_detail(f: m.Finding, confirmed_by_title: dict[str, tuple[int, int]] | None = None) -> dict:
+    d = {
         "id": f.id,
         "report_id": f.report_id,
         "kind": f.kind.value,
@@ -45,6 +73,21 @@ def finding_detail(f: m.Finding) -> dict:
         "created_at": f.created_at.isoformat() if f.created_at else None,
         "superseded": is_superseded(f),
     }
+    if f.kind == m.FindingKind.possible_cause:
+        if confirmed_by_title is None and f.report:
+            confirmed_by_title = confirmed_causes_by_title(f.report.findings)
+        is_dup = False
+        cf_id = None
+        if confirmed_by_title:
+            norm = normalize_cause_title(f.text)
+            if norm in confirmed_by_title:
+                orig_id, conf_id = confirmed_by_title[norm]
+                if f.id != orig_id:
+                    is_dup = True
+                    cf_id = conf_id
+        d["duplicate_of_confirmed"] = is_dup
+        d["confirmed_finding_id"] = cf_id
+    return d
 
 
 def add_finding(db: Session, report: m.IssueReport, kind: str, text: str,
@@ -74,6 +117,13 @@ def confirm_finding(db: Session, finding: m.Finding, confirmed_by: str, notes=No
             e.get("type") == "finding" and e.get("id") == finding.id for e in (other.evidence or [])
         ):
             raise ConflictError("This possible cause has already been confirmed.")
+
+    conf_by_title = confirmed_causes_by_title(finding.report.findings)
+    norm = normalize_cause_title(finding.text)
+    if norm in conf_by_title:
+        orig_id, _ = conf_by_title[norm]
+        if finding.id != orig_id:
+            raise ConflictError("A possible cause with this title has already been confirmed by a technician.")
 
     text = f"Confirmed by technician: {finding.text}"
     if notes:

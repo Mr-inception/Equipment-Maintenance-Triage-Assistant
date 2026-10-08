@@ -231,6 +231,8 @@ export default function ReportDetail({ id, tech, onOpenEquipment }) {
                   {f.text} <Evidence items={f.evidence} />
                   {confirmedFromIds.has(f.id)
                     ? <div className="hint">Confirmed by a technician</div>
+                    : f.duplicate_of_confirmed
+                    ? <div className="hint">Already confirmed by a technician (see Confirmed findings)</div>
                     : <div><button className="ghost" onClick={() => confirm(f.id)}>Confirm as finding</button></div>}
                 </li>
               ))}
@@ -244,6 +246,8 @@ export default function ReportDetail({ id, tech, onOpenEquipment }) {
                       {f.text} <Evidence items={f.evidence} />
                       {confirmedFromIds.has(f.id)
                         ? <div className="hint">Confirmed by a technician</div>
+                        : f.duplicate_of_confirmed
+                        ? <div className="hint">Already confirmed by a technician (see Confirmed findings)</div>
                         : <div><button className="ghost" onClick={() => confirm(f.id)}>Confirm as finding</button></div>}
                     </li>
                   ))}

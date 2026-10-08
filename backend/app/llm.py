@@ -1,4 +1,5 @@
 import logging
+import time
 
 import httpx
 
@@ -62,7 +63,7 @@ def _gemini(system: str, user: str, max_tokens: int) -> str:
     }
     url = GEMINI_URL.format(model=settings.gemini_model)
     try:
-        resp = httpx.post(
+        resp = _post_with_retry(
             url, json=body, headers={"x-goog-api-key": key}, timeout=settings.llm_timeout_seconds
         )
     except httpx.TimeoutException as exc:
@@ -139,3 +140,14 @@ def _anthropic(system: str, user: str, max_tokens: int) -> str:
     if not text.strip():
         raise LLMError("The AI service returned an empty reply.", "empty")
     return text
+
+
+def _post_with_retry(url, **kwargs):
+    """POST, retrying briefly on rate limits and temporary server errors."""
+    delays = [2, 5]
+    for attempt in range(len(delays) + 1):
+        resp = httpx.post(url, **kwargs)
+        if resp.status_code not in (429, 500, 502, 503, 504) or attempt == len(delays):
+            return resp
+        logger.warning("LLM HTTP %s, retrying in %ss", resp.status_code, delays[attempt])
+        time.sleep(delays[attempt])

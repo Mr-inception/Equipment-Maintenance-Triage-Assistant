@@ -106,3 +106,35 @@ def test_unknown_provider(monkeypatch):
     with pytest.raises(llm.LLMError) as exc:
         llm.complete("s", "u")
     assert exc.value.code == "config"
+
+
+@pytest.fixture(autouse=True)
+def no_sleep(monkeypatch):
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+
+
+def test_transient_503_is_retried_then_succeeds(monkeypatch):
+    calls = []
+
+    def fake_post(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            return FakeResp(503, {"error": {"message": "overloaded"}})
+        return FakeResp(200, ok_payload("fine"))
+
+    monkeypatch.setattr(llm.httpx, "post", fake_post)
+    assert llm.complete("s", "u") == "fine"
+    assert len(calls) == 2
+
+
+def test_persistent_503_gives_up_after_retries(monkeypatch):
+    calls = []
+
+    def fake_post(*a, **k):
+        calls.append(1)
+        return FakeResp(503, {"error": {"message": "overloaded"}})
+
+    monkeypatch.setattr(llm.httpx, "post", fake_post)
+    with pytest.raises(llm.LLMError) as exc:
+        llm.complete("s", "u")
+    assert exc.value.code == "api_status" and len(calls) == 3
