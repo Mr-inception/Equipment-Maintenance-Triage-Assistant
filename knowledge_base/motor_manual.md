@@ -1,4 +1,4 @@
-﻿equipment_type: motor
+equipment_type: motor
 title: Three-Phase Induction Motor Maintenance Manual
 
 ## [MOT-1.1] Winding overheating

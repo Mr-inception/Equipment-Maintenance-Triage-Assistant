@@ -1,4 +1,4 @@
-﻿.venv/
+.venv/
 __pycache__/
 *.pyc
 .env
@@ -6,3 +6,7 @@ __pycache__/
 node_modules/
 dist/
 .pytest_cache/
+.env.*
+!.env.example
+*.db-journal
+triage.backup.db

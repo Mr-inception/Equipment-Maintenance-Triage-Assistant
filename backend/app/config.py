@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./triage.db"
     log_level: str = "INFO"
     cors_origins: str = "http://localhost:5173"
+    seed_demo_on_start: bool = False
     knowledge_base_dir: str = ""  # empty = <project root>/knowledge_base
 
     llm_provider: str = "gemini"  # "gemini" or "anthropic"

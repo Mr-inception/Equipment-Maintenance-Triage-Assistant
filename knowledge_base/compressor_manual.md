@@ -1,4 +1,4 @@
-﻿equipment_type: compressor
+equipment_type: compressor
 title: Rotary Screw Air Compressor Maintenance Manual
 
 ## [COMP-1.1] High discharge temperature

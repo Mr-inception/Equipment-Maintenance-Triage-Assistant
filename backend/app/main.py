@@ -20,6 +20,10 @@ logger = logging.getLogger("triage")
 async def lifespan(_: FastAPI):
     init_db()
     logger.info("Database initialised: %s", settings.database_url)
+    if settings.seed_demo_on_start:
+        from .demo import seed_demo_data
+
+        logger.info("Demo seed: %d report(s) created", len(seed_demo_data()))
     try:
         get_knowledge_base()
     except RetrievalError as exc:

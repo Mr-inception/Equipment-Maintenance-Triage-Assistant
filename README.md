@@ -53,6 +53,8 @@ Open http://localhost:5173. The dev server proxies `/api` to the backend on port
 | `LLM_TIMEOUT_SECONDS` | Timeout for the AI call |
 | `DATABASE_URL` | Default `sqlite:///./triage.db` |
 | `CORS_ORIGINS` | Allowed frontend origins |
+| `SEED_DEMO_ON_START` | `true` loads three demo reports on startup (useful on hosts that reset the database) |
+| `VITE_API_URL` | Frontend build setting: the backend's origin when it is hosted on a different domain |
 
 Without a key everything works except AI triage, which fails with a clear message.
 
@@ -85,11 +87,10 @@ The suite covers the rules engine (thresholds, units, missing and conflicting da
 - No live IoT integration, predictive models, inventory or dispatch.
 
 ## AI tools used
-EDIT THIS SECTION so it matches what you actually did.
-- Claude (chat): planning and generating most of the code, one step at a time; I ran and verified each step.
-- Cursor: refactoring citation matching and re-run handling.
-- Gemini API: the runtime LLM for triage.
-- What I verified myself: the test suite, the failure paths (no key, bad data), the safety rules (no AI approval, technician-only confirmation), and the full flow in the browser.
+- Claude (chat): planned the project and generated most of the code step by step; I ran, tested and reviewed each step.
+- Cursor / Antigravity: used for refactors and for an automated API test and release audit; I reviewed the diffs.
+- Gemini API: the runtime LLM that powers triage.
+- What I verified myself: the test suite, the failure paths (no API key, provider overload), the safety rules (no AI approval, technician-only confirmation) and the full flow in the browser.
 
 ## Deployment
 Add your live URLs here once deployed.

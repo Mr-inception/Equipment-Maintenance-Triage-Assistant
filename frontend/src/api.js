@@ -1,3 +1,5 @@
+const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -8,7 +10,7 @@ export class ApiError extends Error {
 async function request(path, options = {}) {
   let res;
   try {
-    res = await fetch(`/api${path}`, {
+    res = await fetch(`${API_BASE}/api${path}`, {
       headers: { "Content-Type": "application/json" },
       ...options,
     });

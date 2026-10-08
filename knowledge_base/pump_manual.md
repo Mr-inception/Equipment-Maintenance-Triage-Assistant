@@ -1,4 +1,4 @@
-﻿equipment_type: pump
+equipment_type: pump
 title: Centrifugal Pump Maintenance Manual
 
 ## [PUMP-1.1] High bearing temperature
