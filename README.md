@@ -93,4 +93,19 @@ The suite covers the rules engine (thresholds, units, missing and conflicting da
 - What I verified myself: the test suite, the failure paths (no API key, provider overload), the safety rules (no AI approval, technician-only confirmation) and the full flow in the browser.
 
 ## Deployment
-Add your live URLs here once deployed.
+- Live app: https://equipment-maintenance-triage-assist-nine.vercel.app
+- API health check: https://equipment-maintenance-triage-assistant-0y3x.onrender.com/api/health
+- Frontend hosted on Vercel, backend on Render (free tier).
+
+Notes for anyone trying the live demo:
+- The free backend sleeps when idle, so the first request after a pause can take 30 to 60 seconds.
+- The database is SQLite on an ephemeral disk, so data resets whenever the service restarts or redeploys. Three demo reports are re-created on startup (SEED_DEMO_ON_START=true).
+- AI triage uses my Gemini quota and can be rate limited or temporarily unavailable. When that happens the app shows the failure instead of guessing.
+
+## Quick demo walkthrough
+1. Enter a name in the **Technician** box (top right).
+2. Open **DEMO-PUMP-1**. The threshold checks show a conflicting bearing temperature, a vibration warning and a low suction pressure warning.
+3. Click **Run AI triage**. Review the cited possible causes, follow-up questions, inspection steps and the proposed priority.
+4. Click **Confirm as finding** on a cause, then **Edit** and **Approve** the draft work order.
+5. Open **Equipment history** to see the audit trail.
+6. Try **New report** with a blank sensor value (missing data) or the same sensor twice with different values (conflict).
