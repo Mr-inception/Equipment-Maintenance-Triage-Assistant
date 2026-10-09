@@ -72,6 +72,31 @@ The suite covers the rules engine (thresholds, units, missing and conflicting da
     frontend/src/      React app (report form, report detail, work orders, equipment history)
     knowledge_base/    equipment manuals (markdown, one section per citable ID)
 
+## Architecture
+
+    Browser (React/Vite, Vercel)
+        |  HTTPS, base URL from VITE_API_URL
+        v
+    FastAPI (Render)
+        rules.py        deterministic threshold checks, unit conversion, missing/conflicting data
+        retrieval.py    BM25 over knowledge_base/*.md, cited by section ID
+        triage.py       retrieval -> prompt -> LLM -> JSON validation -> citation validation
+                        -> priority floor -> persist (never approves anything)
+        llm.py          Gemini REST client: timeout, retries on 429/5xx, mapped error messages
+        workorders.py   edit / approve / reject (technician name required, drafts only)
+        findings.py     technician-confirmed findings, duplicate detection
+        SQLite (SQLAlchemy): equipment, issue_reports, sensor_readings, triage_runs,
+                             findings, work_orders, history_events
+
+Logging: Python logging to stdout (timestamp | level | component | message) for startup, retrieval, LLM calls (status, retries, timeouts, never keys) and triage results. Every user action is also stored as a `history_events` row, and every AI run as a `triage_runs` row with status, model and error message. Logs are plain text, not JSON.
+
+## Scope
+Completed: report form, deterministic checks, retrieval over manuals, AI triage with citations, priority floor, draft work orders with technician edit/approve/reject, separate observations / possible causes / confirmed findings, missing and conflicting sensor handling, visible AI and retrieval failures, equipment history with audit trail, 86 tests, deployment.
+
+Intentionally excluded: user accounts and authentication, live IoT or equipment control, predictive models, inventory, technician dispatch, a vector database, an admin UI for thresholds, a persistent hosted database, JSON-structured logs, browser end-to-end tests.
+
+## Reviewing the live demo
+No login is needed. Enter any name in the Technician box, then use the three demo reports (pump, compressor, motor) or create your own. See AGENT_USAGE.md for how AI tools were used.
 ## Design decisions
 - **Rules before AI.** Thresholds are deterministic code. The AI sees the results and cannot overrule them.
 - **Evidence or it is dropped.** Citations are validated server side against the IDs supplied in the prompt.
@@ -87,6 +112,8 @@ The suite covers the rules engine (thresholds, units, missing and conflicting da
 - No live IoT integration, predictive models, inventory or dispatch.
 
 ## AI tools used
+Details, prompts and corrections are in [AGENT_USAGE.md](AGENT_USAGE.md).
+
 - Claude (chat): planned the project and generated most of the code step by step; I ran, tested and reviewed each step.
 - Cursor / Antigravity: used for refactors and for an automated API test and release audit; I reviewed the diffs.
 - Gemini API: the runtime LLM that powers triage.
